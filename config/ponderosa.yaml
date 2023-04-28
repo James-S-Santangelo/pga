@@ -1,0 +1,8 @@
+# Input files
+resources: ../resources
+genemark: /home/santang3/downloads/gmes_linux_64_4
+prothint: /home/santang3/downloads/gmes_linux_64_4/ProtHint/bin
+
+# Output
+results_prefix: /space/s1/santang3/pga/results
+log_prefix: /space/s1/santang3/pga/logs

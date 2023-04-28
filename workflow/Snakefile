@@ -1,0 +1,40 @@
+import os
+import glob
+import pandas as pd
+from snakemake.utils import min_version
+
+min_version('7.16.0')
+
+configfile: '../config/ponderosa.yaml'
+
+# Define absolute path to pipeline resources
+RESOURCES = os.path.abspath(config['resources'])
+
+# Programs required by BRAKER
+GENEMARK = config['genemark']
+PROTHINT = config['prothint']
+
+# Input files
+PSIC_REFERENCE = f"{RESOURCES}/genome_fasta/Psic_sn201_all.ph.fasta"
+REPBASE = f"{RESOURCES}/RepBaseRepeatMaskerEdition-20181026.tar.gz"
+IPRSCAN_DATA = f"{RESOURCES}/interproscan-5.61-93.0/data"
+
+RNASEQ_ACCESSIONS = pd.read_csv(f"{RESOURCES}/podacris_rnaseq_accessions.txt", sep = '\t')['accession'].tolist()
+
+# Paths for output files
+LOG_DIR = config['log_prefix']
+ANNOTATION_DIR = f"{config['results_prefix']}/annotation"
+PROGRAM_RESOURCE_DIR = f"{config['results_prefix']}/program_resources"
+QC_DIR = f"{config['results_prefix']}/qc"
+
+wildcard_constraints:
+    acc = '|'.join(ALL_RNASEQ_SAMPLES)
+
+rule all:
+    input:
+        f"{ANNOTATION_DIR}/annotation.done",
+        f'{QC_DIR}/qc.done',
+
+include: 'rules/annotation.smk'
+include: 'rules/qc.smk'
+
