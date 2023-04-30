@@ -125,28 +125,32 @@ rule vertebrata_orthodb:
         gunzip {params.outdir}/Vertebrata.fa.gz ) 2> {log}
         """
 
-# rule download_uniprot_fabaceae_db:
-#     output:
-#         f'{PROGRAM_RESOURCE_DIR}/uniprot/fabaceae_proteins.fasta'
-#     log: LOG_DIR + '/uniprot_download/fabaceae_proteins_dl.log'
-#     params:
-#         url = "https://rest.uniprot.org/uniprotkb/stream?compressed=false&format=fasta&query=%28taxonomy_name%3Afabaceae%29"
-#     shell:
-#         """
-#         curl --output {output} '{params.url}' 2> {log}
-#         """
-# 
-# rule combine_protein_dbs:
-#     input:
-#         ortho = rules.viridiplantae_orthodb.output,
-#         fab = rules.download_uniprot_fabaceae_db.output
-#     output:
-#         f"{PROGRAM_RESOURCE_DIR}/allProteins.fasta"
-#     shell:
-#         """
-#         cat {input.fab} {input.ortho} > {output}
-#         """
-# 
+rule download_podacris_proteins:
+    output:
+        prot = f"{PROGRAM_RESOURCE_DIR}/podacris_proteins/{{psp}}/{{psp}}_proteins.fa"
+    log: f"{LOG_DIR}/download_podacris_proteins/{{psp}}.log"
+    params:
+        ref_seq = lambda wildcards: 'GCF_027172205.1' if wildcards.psp == 'Praf' else 'GCF_004329235.1',
+        outdir = f"{PROGRAM_RESOURCE_DIR}/podacris_proteins/{{psp}}/" 
+    shell:
+        """
+        curl -OJX GET "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/{params.ref_seq}/download?include_annotation_type=PROT_FASTA&filename={wildcards.psp}.zip" -H "Accept: application/zip" &&
+        unzip {wildcards.psp}.zip -d {params.outdir} &&
+        cp  {params.outdir}/ncbi_dataset/data/{params.ref_seq}/protein.faa {output}
+        rm -rf {params.outdir}/ncbi_dataset
+        """
+
+rule combine_protein_dbs:
+    input:
+        ortho = rules.vertebrata_orthodb.output,
+        psp = expand(rules.download_podacris_proteins.output, psp = ['Praf', 'Pmur'])
+    output:
+        f"{PROGRAM_RESOURCE_DIR}/allProteins.fasta"
+    shell:
+        """
+        cat {input.psp} {input.ortho} > {output}
+        """
+
 # rule braker_protein:
 #     input:
 #         proteins = rules.combine_protein_dbs.output,
