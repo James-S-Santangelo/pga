@@ -109,23 +109,22 @@ rule repeat_masker:
             mv {params.outdir}/*.tbl {output.stats} ) &> {log}
         """
 
-# ###############################
-# #### STRUCTURAL ANNOTATION ####
-# ###############################
-# 
-# rule viridiplantae_orthodb:
-#     output:
-#         Plant_ProrteinDB = f"{PROGRAM_RESOURCE_DIR}/orthodb/Viridiplantae_protein.fasta"
-#     log: LOG_DIR + "/orthodb/ortho.log"
-#     params:
-#         outdir = f"{PROGRAM_RESOURCE_DIR}/orthodb"
-#     shell:
-#         """
-#         ( wget --no-check-certificate https://v100.orthodb.org/download/odb10_plants_fasta.tar.gz && 
-#         tar -zxf odb10_plants_fasta.tar.gz -C {params.outdir} &&
-#         cat {params.outdir}/plants/Rawdata/* > {output} ) 2> {log}
-#         """
-# 
+###############################
+###STRUCTURAL ANNOTATION ####
+###############################
+
+rule vertebrata_orthodb:
+    output:
+        ProrteinDB = f"{PROGRAM_RESOURCE_DIR}/orthodb/Vertebrata.fa"
+    log: LOG_DIR + "/orthodb/ortho.log"
+    params:
+        outdir = f"{PROGRAM_RESOURCE_DIR}/orthodb"
+    shell:
+        """
+        ( wget --no-check-certificate https://bioinf.uni-greifswald.de/bioinf/partitioned_odb11/Vertebrata.fa.gz -P {params.outdir} && 
+        gunzip {params.outdir}/Vertebrata.fa.gz ) 2> {log}
+        """
+
 # rule download_uniprot_fabaceae_db:
 #     output:
 #         f'{PROGRAM_RESOURCE_DIR}/uniprot/fabaceae_proteins.fasta'
