@@ -15,7 +15,7 @@ GENEMARK = config['genemark']
 PROTHINT = config['prothint']
 
 # Input files
-PSIC_REFERENCE = f"{RESOURCES}/genome_fasta/Psic_sn201_all.ph.fasta"
+PSIC_REF = f"{RESOURCES}/genome_fasta/Psic_sn201_all.ph.fasta"
 REPBASE = f"{RESOURCES}/RepBaseRepeatMaskerEdition-20181026.tar.gz"
 IPRSCAN_DATA = f"{RESOURCES}/interproscan-5.61-93.0/data"
 
@@ -25,16 +25,15 @@ RNASEQ_ACCESSIONS = pd.read_csv(f"{RESOURCES}/podacris_rnaseq_accessions.txt", s
 LOG_DIR = config['log_prefix']
 ANNOTATION_DIR = f"{config['results_prefix']}/annotation"
 PROGRAM_RESOURCE_DIR = f"{config['results_prefix']}/program_resources"
+REF_DIR = f"{config['results_prefix']}/ref"
 QC_DIR = f"{config['results_prefix']}/qc"
-
-wildcard_constraints:
-    acc = '|'.join(ALL_RNASEQ_SAMPLES)
 
 rule all:
     input:
         f"{ANNOTATION_DIR}/annotation.done",
         f'{QC_DIR}/qc.done',
 
+include: 'rules/ref.smk'
 include: 'rules/annotation.smk'
 include: 'rules/qc.smk'
 

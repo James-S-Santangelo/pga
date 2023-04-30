@@ -25,7 +25,7 @@ rule configure_repbase:
 
 rule build_repeat_modeler_db:
     input:
-        PSIC_REF
+        rules.subset_ref_bySeqLength.output.fasta
     output:
         multiext(f"{ANNOTATION_DIR}/repeat_modeler/rmdb", '.nhr', '.nin', '.nnd', '.nni', '.nog', '.nsq', '.translation')
     container: 'docker://dfam/tetools:1.8'
@@ -44,7 +44,7 @@ rule repeat_modeler:
     output:
         fasta = f"{ANNOTATION_DIR}/repeat_modeler/rmdb-families.fa",
         stk = f"{ANNOTATION_DIR}/repeat_modeler/rmdb-families.stk"
-    threads: 48
+    threads: 24
     container: 'docker://dfam/tetools:1.8'
     log: LOG_DIR + '/repeat_modeler/rm.log'
     params:
@@ -79,23 +79,25 @@ rule merge_repeat_databases:
 rule repeat_masker:
     input:
         lib = rules.merge_repeat_databases.output,
-        fasta = PSIC_REF 
+        fasta = rules.subset_ref_bySeqLength.output.fasta
     output:
         fasta = f"{ANNOTATION_DIR}/repeat_masker/psic_reference_softMasked.fasta",
         cat = f"{ANNOTATION_DIR}/repeat_masker/psic_reference_repeatMasker.cat.gz",
         out = f"{ANNOTATION_DIR}/repeat_masker/psic_reference_repeatMasker.out",
         gff = f"{ANNOTATION_DIR}/repeat_masker/psic_reference_repeatMasker.gff",
         stats = f"{ANNOTATION_DIR}/repeat_masker/psic_reference_repeatMasker.tbl"
-    threads: 48
+    threads: 24
     container: 'docker://dfam/tetools:1.8'
     log: LOG_DIR + '/repeat_masker/repeat_masker.log'
     params:
-        outdir = f"{ANNOTATION_DIR}/repeat_masker/"
+        outdir = f"{ANNOTATION_DIR}/repeat_masker/",
+        gc = 44
     shell:
         """
         ( RepeatMasker -e ncbi \
             -pa {threads} \
             -xsmall \
+            -gc {params.gc} \
             -lib {input.lib} \
             -dir {params.outdir} \
             -gff {input.fasta} &&

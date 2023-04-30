@@ -2,7 +2,7 @@
 
 rule quast_psic_ref:
     input:
-        fasta = PSIC_REFERENCE, 
+        fasta = rules.setup_ref.output.fasta 
     output:
         directory(f"{QC_DIR}/quast/psic_ref")
     log: LOG_DIR + '/quast/quast_psic_ref.log'
@@ -18,32 +18,32 @@ rule quast_psic_ref:
             {input.fasta} &> {log}
         """
 
-# rule run_busco:
-#     input:
-#         prot = f"{rules.funannotate_annotate.output}/annotate_results/Trifolium_repens.proteins.fa"
-#     output:
-#         directory(f"{QC_DIR}/busco/TrR_v6_{{db}}")
-#     log: LOG_DIR + '/busco/busco_{db}.log'
-#     conda: '../envs/qc.yaml'
-#     threads: 32
-#     params:
-#         out_path = f"{QC_DIR}/busco/",
-#         out_name = "TrR_v6_{db}"
-#     shell:
-#         """
-#         busco -m protein \
-#             -i {input.prot} \
-#             -o {params.out_name} \
-#             --out_path {params.out_path} \
-#             --lineage {wildcards.db} \
-#             --force \
-#             --cpu {threads} &> {log}
-#         """
+rule run_busco_genome:
+    input:
+        fasta = rules.subset_ref_bySeqLength.output.fasta
+    output:
+        directory(f"{QC_DIR}/busco/genome/psic_genome_tetrapoda")
+    log: LOG_DIR + '/busco/busco_genome_tetrapoda.log'
+    conda: '../envs/qc.yaml'
+    threads: 32
+    params:
+        out_path = f"{QC_DIR}/busco/genome/",
+        out_name = "psic_genome_tetrapoda"
+    shell:
+        """
+        busco -m genome \
+            -i {input.fasta} \
+            -o {params.out_name} \
+            --out_path {params.out_path} \
+            --lineage tetrapoda_odb10 \
+            --force \
+            --cpu {threads} &> {log}
+        """
 
 rule qc_done:
     input:
-        rules.quast_haploid_ref.output,
-        #expand(rules.run_busco.output, db = ['embryophyta_odb10', 'fabales_odb10'])
+        rules.quast_psic_ref.output,
+        rules.run_busco_genome.output
     output:
         f'{QC_DIR}/qc.done'
     shell:
