@@ -109,6 +109,114 @@ rule repeat_masker:
             mv {params.outdir}/*.tbl {output.stats} ) &> {log}
         """
 
+###########################################
+#### DOWNLOAD AND MAP ALL RNASEQ READS ####
+###########################################
+
+rule prefetch:
+    output:
+        temp(directory(f"{ANNOTATION_DIR}/rnaseq_reads/{{acc}}"))
+    log: LOG_DIR + '/prefetch/{acc}.log'
+    conda: '../envs/annotation.yaml'
+    params:
+        outdir = f"{ANNOTATION_DIR}/rnaseq_reads"
+    shell:
+        """
+        prefetch {wildcards.acc} -O {params.outdir} 2> {log}
+        """
+
+rule fasterq_dump:
+    input:
+        expand(rules.prefetch.output, acc=RNASEQ_ACCESSIONS)
+    output:
+        R1 = temp(f"{ANNOTATION_DIR}/rnaseq_reads/{{acc}}_1.fastq"),
+        R2 = temp(f"{ANNOTATION_DIR}/rnaseq_reads/{{acc}}_2.fastq")
+    log: LOG_DIR + '/fastq_dump/{acc}_fastq_dump.log'
+    conda: '../envs/annotation.yaml'
+    params:
+        outdir = f"{ANNOTATION_DIR}/rnaseq_reads"
+    threads: 6
+    shell:
+        """
+        cd {params.outdir}
+        fasterq-dump --split-3 \
+            -e {threads} \
+            --skip-technical \
+            {wildcards.acc} 2> {log}
+        """
+
+rule gzip_fastq:
+    input:
+        rules.fasterq_dump.output
+    output:
+        R1 = temp(f"{ANNOTATION_DIR}/rnaseq_reads/{{acc}}_1.fastq.gz"),
+        R2 = temp(f"{ANNOTATION_DIR}/rnaseq_reads/{{acc}}_2.fastq.gz")
+    log: LOG_DIR + '/gzip_fastq/{acc}_gzip.log'
+    shell:
+        """
+        gzip {input} 2> {log} 
+        """
+
+rule build_star:
+    input:
+        masked_genome = rules.repeat_masker.output.fasta 
+    output:
+        temp(directory(f"{ANNOTATION_DIR}/star/star_build"))
+    log: LOG_DIR + '/star/star_build.log'
+    conda:'../envs/annotation.yaml'
+    threads: 6
+    shell:
+        """
+        mkdir {output}
+        STAR --runMode genomeGenerate \
+            --genomeDir {output} \
+            --genomeFastaFiles {input.masked_genome} \
+            --runThreadN {threads} &> {log}
+        """
+
+rule align_star:
+    input:
+        star_build = rules.build_star.output,
+        R1 = rules.gzip_fastq.output.R1,
+        R2 = rules.gzip_fastq.output.R2
+    output:
+        star_align = temp(f"{ANNOTATION_DIR}/star/star_align/{{acc}}/{{acc}}_Aligned.sortedByCoord.out.bam") 
+    log: LOG_DIR + '/star/{acc}_star_align.log'
+    conda:'../envs/annotation.yaml'
+    params:
+        out = f"{ANNOTATION_DIR}/star/star_align/{{acc}}/{{acc}}_"
+    threads: 6
+    shell:
+        """
+        STAR --readFilesIn {input.R1} {input.R2} \
+            --outSAMtype BAM SortedByCoordinate \
+            --outSAMstrandField intronMotif \
+            --twopassMode Basic \
+            --genomeDir {input.star_build} \
+            --runThreadN {threads} \
+            --readFilesCommand zcat \
+            --alignIntronMax 10000 \
+            --outFileNamePrefix {params.out} &> {log} 
+        """
+
+rule merge_rnaseq_bams:
+    """
+    Merges STAR-aligned RNAseq reads into a single BAM file. This will be used as input to BRAKER in RNAseq-mode
+    """
+    input:
+        Star_Bam = expand(rules.align_star.output, acc=RNASEQ_ACCESSIONS),
+    output:
+        bam = f"{ANNOTATION_DIR}/star/allBams_merged.bam",
+        bai = f"{ANNOTATION_DIR}/star/allBams_merged.bam.bai"
+    conda: '../envs/annotation.yaml'
+    threads: 30
+    log: LOG_DIR + '/merge_rnaseq_bams/bams_merge.log'
+    shell:
+        """
+        ( samtools merge -@ {threads} -r -o {output.bam} {input} &&\
+            samtools index {output.bam} ) 2> {log}
+        """
+
 ###############################
 ###STRUCTURAL ANNOTATION ####
 ###############################
@@ -140,224 +248,218 @@ rule download_podacris_proteins:
         rm -rf {params.outdir}/ncbi_dataset
         """
 
+rule download_uniprot_lacertidae_db:
+    """
+    Download all Fabaceae proteins from UniProtKB
+    """
+    output:
+        f'{PROGRAM_RESOURCE_DIR}/uniprot/lacertidae_proteins.fasta'
+    log: LOG_DIR + '/uniprot_download/lacertidae_proteins_dl.log'
+    params:
+        url = "https://rest.uniprot.org/uniprotkb/stream?compressed=false&format=fasta&query=%28taxonomy_name%3Alacertidae%29"
+    shell:
+        """
+        curl --output {output} '{params.url}' 2> {log}
+        """
+
 rule combine_protein_dbs:
     input:
         ortho = rules.vertebrata_orthodb.output,
-        psp = expand(rules.download_podacris_proteins.output, psp = ['Praf', 'Pmur'])
+        psp = expand(rules.download_podacris_proteins.output, psp = ['Praf', 'Pmur']),
+        unip = rules.download_uniprot_lacertidae_db.output
     output:
         f"{PROGRAM_RESOURCE_DIR}/allProteins.fasta"
     shell:
         """
-        cat {input.psp} {input.ortho} > {output}
+        cat {input} > {output}
         """
 
-# rule braker_protein:
-#     input:
-#         proteins = rules.combine_protein_dbs.output,
-#         masked_genome = rules.repeat_masker.output.fasta,
-#     output:
-#         prot_aug = f"{ANNOTATION_DIR}/braker/proteins/Augustus/augustus.hints.gtf",
-#         hints_prot = f"{ANNOTATION_DIR}/braker/proteins/hintsfile.gff"
-#     log: LOG_DIR + '/braker/proteins.log'
-#     params:
-#         outputdir = f"{ANNOTATION_DIR}/braker/rnaseq",
-#         genemark = GENEMARK,
-#         prothint = PROTHINT,
-#     threads: 30
-#     container: 'docker://teambraker/braker3' 
-#     shell:
-#         """
-#         braker.pl --genome {input.masked_genome} \
-#             --prot_seq {input.proteins} \
-#             --softmasking \
-#             --useexisting \
-#             --GENEMARK_PATH {params.genemark} \
-#             --PROTHINT_PATH {params.prothint} \
-#             --threads {threads} \
-#             --workingdir {params.outputdir} \
-#             --species "Trifolium repens prot" 2> {log}
-#         """ 
-# 
-# rule count_uniprot_seqs:
-#     input:
-#         rules.download_uniprot_fabaceae_db.output
-#     output:
-#         f"{ANNOTATION_DIR}/uniprotSeqs_byTaxon.txt"
-#     conda: '../envs/notebooks.yaml'
-#     log: LOG_DIR + '/notebooks/count_uniprot_seqs_processed.ipynb'
-#     notebook:
-#         "../notebooks/count_uniprot_seqs.py.ipynb"
-# 
-# rule merge_rnaseq_bams:
-#     input:
-#         Star_Bam = expand(rules.align_star.output, acc=RNASEQ_ACCESSIONS),
-#     output:
-#         bam = f"{ANNOTATION_DIR}/star/allBams_merged.bam",
-#         bai = f"{ANNOTATION_DIR}/star/allBams_merged.bam.bai"
-#     conda: '../envs/annotation.yaml'
-#     threads: 30
-#     log: LOG_DIR + '/merge_rnaseq_bams/bams_merge.log'
-#     shell:
-#         """
-#         ( samtools merge -@ {threads} -r -o {output.bam} {input} &&\
-#             samtools index {output.bam} ) 2> {log}
-#         """
-# 
-# rule braker_rnaseq:
-#     input:
-#         masked_genome = rules.repeat_masker.output.fasta,
-#         bam = rules.merge_rnaseq_bams.output.bam
-#     output:
-#         rna_aug = f"{ANNOTATION_DIR}/braker/rnaseq/Augustus/augustus.hints.gtf",
-#         hints_rna = f"{ANNOTATION_DIR}/braker/rnaseq/hintsfile.gff"
-#     log: LOG_DIR + '/braker/rnaseq.log'
-#     params:
-#         outputdir = f"{ANNOTATION_DIR}/braker/rnaseq",
-#         genemark=GENEMARK
-#     threads: 30
-#     container: 'docker://teambraker/braker3' 
-#     shell:
-#         """
-#         braker.pl --genome {input.masked_genome} \
-#             --bam {input.bam} \
-#             --softmasking \
-#             --useexisting \
-#             --threads {threads} \
-#             --GENEMARK_PATH={params.genemark} \
-#             --workingdir {params.outputdir} \
-#             --species "Trifolium repens rna" 2> {log} 
-#         """
-# 
-# rule tsebra_combine:
-#     input:
-#         rules.braker_protein.output,
-#         rules.braker_rnaseq.output,
-#         rna_aug = rules.braker_rnaseq.output.rna_aug, 
-#         prot_aug = rules.braker_protein.output.prot_aug, 
-#         hints_rna= rules.braker_rnaseq.output.hints_rna,
-#         hints_prot = rules.braker_protein.output.hints_prot 
-#     output:
-#         braker_combined = f"{ANNOTATION_DIR}/braker/tsebra/braker_combined.gtf"
-#     log: LOG_DIR + '/braker/tsebra.log'
-#     container: 'docker://teambraker/braker3'
-#     params:
-#         config = '../config/tsebra.cfg',
-#     shell:
-#         """
-#         tsebra.py -g {input.rna_aug},{input.prot_aug} \
-#             -c {params.config} \
-#             -e {input.hints_rna},{input.hints_prot} \
-#             -o {output} 2> {log} 
-#         """ 
-# 
-# rule rename_tsebra_gtf:
-#     input:
-#         rules.tsebra_combine.output
-#     output:
-#         gtf = f"{ANNOTATION_DIR}/braker/tsebra/braker_combined_renamed.gtf",
-#         tab = f"{ANNOTATION_DIR}/braker/tsebra/tsebra_rename_translationTab.txt"
-#     log: LOG_DIR + '/braker/rename_gtf.log'
-#     container: 'docker://teambraker/braker3'
-#     shell:
-#         """
-#         rename_gtf.py --gtf {input} \
-#             --prefix ACLI19 \
-#             --translation_tab {output.tab} \
-#             --out {output.gtf} 2> {log} 
-#         """
-# 
-# ###############################
-# #### CLEAN & TRANSFORM GTF ####
-# ###############################
-# 
-# rule remove_features_and_organelles:
-#     input:
-#         rules.rename_tsebra_gtf.output
-#     output:
-#         f"{ANNOTATION_DIR}/cleaned/braker_combined_CDSonly_noOrgs.gtf"
-#     run:
-#         organelles = ['Mitochondria', 'Plastid']
-#         features = ['exon', 'intron', 'gene', 'transcript']
-#         with open(input[0], 'r') as fin:
-#             with open(output[0], 'w') as fout:
-#                 lines = fin.readlines()
-#                 for line in lines:
-#                     sline = line.split('\t')
-#                     if sline[0] in organelles or sline[2] in features:
-#                         pass
-#                     else:
-#                         fout.write(line)
-# 
-# rule gtf_to_gff:
-#     input:
-#         rules.remove_features_and_organelles.output
-#     output:
-#         f"{ANNOTATION_DIR}/cleand/UTM_Trep_v1.0_structural.gff"
-#     container: 'docker://quay.io/biocontainers/agat:1.0.0--pl5321hdfd78af_0'
-#     log: LOG_DIR + '/gtf_to_gff/gtf_to_gff.log'
-#     shell:
-#         """
-#         agat_convert_sp_gxf2gxf.pl --gtf {input} \
-#             --output {output} &> {log}
-#         """
-# 
-# rule gff_sort:
-#     input:
-#         rules.gtf_to_gff.output
-#     output:
-#         f"{ANNOTATION_DIR}/cleaned/UTM_Trep_v1.0_structural_sorted.gff"
-#     log: LOG_DIR + '/gff_sort/gff_sort.log'
-#     conda: '../envs/annotation.yaml'
-#     shell:
-#         """
-#         gt gff3 -sort -tidy -retainids {input} > {output} 2> {log}
-#         """
-# 
-# rule reformat_gff:
-#     input:
-#         rules.gff_sort.output
-#     output:
-#         f"{ANNOTATION_DIR}/cleaned/UTM_Trep_v1.0_structural_sorted_reformated.gff"
-#     run:
-#         with open(input[0], 'r') as fin:
-#             with open(output[0], 'w') as fout:
-#                 lines = fin.readlines()
-#                 for line in lines:
-#                     if not line.startswith('#'):
-#                         sline = line.split('\t')
-#                         feature = sline[2]
-#                         if feature == 'gene':
-#                             # Remove transcript_id attribute from gene features
-#                             sline[8] = re.sub(r'(;transcript_id.*$)', '', sline[8])
-#                         elif feature == 'mRNA':
-#                             # Make sure transcript_id annotations for isoforms are correct (i.e., .t2, .t3, etc.)
-#                             # Use ID attribute since transcript_id attributes are incorrectly incremented and will be replaced
-#                             id_pattern = r"(?<=ID=)(.*)(?=;Parent)"
-#                             ID = re.search(id_pattern, sline[8]).group(1)
-#                             if ID.endswith('.t1'):
-#                                 # First isoforms are fine
-#                                 pass
-#                             else:
-#                                 # Alternative isoforms need transcript_id replaced with ID
-#                                 sline[8] = re.sub(r'(?<=;transcript_id=)(.*$)', ID, sline[8])
-#                         fout.write('\t'.join(sline))
-#                     else:
-#                         fout.write(line) 
-# 
-# 
-# rule get_proteins:
-#     input:
-#         gff = rules.reformat_gff.output,
-#         ref = rules.repeat_masker.output.fasta
-#     output:
-#         f"{ANNOTATION_DIR}/UTM_Trep_v1.0_proteins.fasta"
-#     log: LOG_DIR + '/get_proteins/get_proteins.log'
-#     container: 'docker://teambraker/braker3'
-#     shell:
-#         """
-#         gffread -E -y {output} -g {input.ref} {input.gff} 2> {log}
-#         """
-# 
+rule braker_protein:
+    input:
+        proteins = rules.combine_protein_dbs.output,
+        masked_genome = rules.repeat_masker.output.fasta,
+    output:
+        prot_aug = f"{ANNOTATION_DIR}/braker/protein/Augustus/augustus.hints.gtf",
+        hints_prot = f"{ANNOTATION_DIR}/braker/protein/hintsfile.gff"
+    log: LOG_DIR + '/braker/proteins.log'
+    params:
+        outputdir = f"{ANNOTATION_DIR}/braker/protein"
+    threads: 32
+    container: 'docker://teambraker/braker3:v.1.0.4' 
+    shell:
+        """
+        braker.pl --genome {input.masked_genome} \
+            --prot_seq {input.proteins} \
+            --softmasking \
+            --useexisting \
+            --threads {threads} \
+            --workingdir {params.outputdir} \
+            --species "Podacris siculus prot" 2> {log}
+        """ 
+
+rule braker_rnaseq:
+    input:
+        masked_genome = rules.repeat_masker.output.fasta,
+        bam = rules.merge_rnaseq_bams.output.bam
+    output:
+        rna_aug = f"{ANNOTATION_DIR}/braker/rnaseq/Augustus/augustus.hints.gtf",
+        hints_rna = f"{ANNOTATION_DIR}/braker/rnaseq/hintsfile.gff"
+    log: LOG_DIR + '/braker/rnaseq.log'
+    params:
+        outputdir = f"{ANNOTATION_DIR}/braker/rnaseq"
+    threads: 32
+    container: 'docker://teambraker/braker3:v.1.0.4' 
+    shell:
+        """
+        braker.pl --genome {input.masked_genome} \
+            --bam {input.bam} \
+            --softmasking \
+            --useexisting \
+            --threads {threads} \
+            --workingdir {params.outputdir} \
+            --species "Podacris siculus rna" 2> {log} 
+        """
+
+rule tsebra_combine:
+    input:
+        rules.braker_protein.output,
+        rules.braker_rnaseq.output,
+        rna_aug = rules.braker_rnaseq.output.rna_aug, 
+        prot_aug = rules.braker_protein.output.prot_aug, 
+        hints_rna= rules.braker_rnaseq.output.hints_rna,
+        hints_prot = rules.braker_protein.output.hints_prot 
+    output:
+        braker_combined = f"{ANNOTATION_DIR}/braker/tsebra/braker_combined.gtf"
+    log: LOG_DIR + '/braker/tsebra.log'
+    container: 'docker://teambraker/braker3:v.1.0.4'
+    params:
+        config = '../config/tsebra.cfg',
+    shell:
+        """
+        tsebra.py -g {input.prot_aug} \
+            -k {input.rna_aug} \
+            -c {params.config} \
+            -e {input.hints_rna},{input.hints_prot} \
+            -o {output} 2> {log} 
+        """ 
+
+rule rename_tsebra_gtf:
+    input:
+        rules.tsebra_combine.output
+    output:
+        gtf = f"{ANNOTATION_DIR}/braker/tsebra/braker_combined_renamed.gtf",
+        tab = f"{ANNOTATION_DIR}/braker/tsebra/tsebra_rename_translationTab.txt"
+    log: LOG_DIR + '/braker/rename_gtf.log'
+    container: 'docker://teambraker/braker3:v.1.0.4'
+    shell:
+        """
+        rename_gtf.py --gtf {input} \
+            --prefix Psic \
+            --translation_tab {output.tab} \
+            --out {output.gtf} 2> {log} 
+        """
+
+###############################
+###CLEAN & TRANSFORM GTF ####
+###############################
+
+rule remove_features_and_organelles:
+    input:
+        rules.rename_tsebra_gtf.output
+    output:
+        f"{ANNOTATION_DIR}/cleaned/braker_combined_CDSonly_noOrgs.gtf"
+    run:
+        features = ['exon', 'intron', 'gene', 'transcript']
+        with open(input[0], 'r') as fin:
+            with open(output[0], 'w') as fout:
+                lines = fin.readlines()
+                for line in lines:
+                    sline = line.split('\t')
+                    if sline[2] in features:
+                        pass
+                    else:
+                        fout.write(line)
+
+rule gtf_to_gff:
+    input:
+        rules.remove_features_and_organelles.output
+    output:
+        f"{ANNOTATION_DIR}/cleaned/Psic_structural.gff"
+    container: 'docker://quay.io/biocontainers/agat:1.0.0--pl5321hdfd78af_0'
+    log: LOG_DIR + '/gtf_to_gff/gtf_to_gff.log'
+    shell:
+        """
+        agat_convert_sp_gxf2gxf.pl --gtf {input} \
+            --output {output} &> {log}
+        """
+
+rule fix_seq:
+    input:
+        rules.gtf_to_gff.output
+    output:
+        f"{ANNOTATION_DIR}/cleaned/Psic_structural_seqFix.gff"
+    shell:
+        """
+        sed 's/SEQ/0/g' {input} > {output}
+        """
+
+rule gff_sort:
+    input:
+        rules.fix_seq.output
+    output:
+        f"{ANNOTATION_DIR}/cleaned/Psic_structural_sorted.gff"
+    log: LOG_DIR + '/gff_sort/gff_sort.log'
+    conda: '../envs/annotation.yaml'
+    shell:
+        """
+        gt gff3 -sort -tidy -retainids {input} > {output} 2> {log}
+        """
+
+rule reformat_gff:
+    input:
+        rules.gff_sort.output
+    output:
+        f"{ANNOTATION_DIR}/cleaned/Psic_structural_sorted_reformated.gff"
+    run:
+        with open(input[0], 'r') as fin:
+            with open(output[0], 'w') as fout:
+                lines = fin.readlines()
+                for line in lines:
+                    if not line.startswith('#'):
+                        sline = line.split('\t')
+                        feature = sline[2]
+                        if feature == 'gene':
+                            #Remove transcript_id attribute from gene features
+                            sline[8] = re.sub(r'(;transcript_id.*$)', '', sline[8])
+                        elif feature == 'mRNA':
+                            #Make sure transcript_id annotations for isoforms are correct (i.e., .t2, .t3, etc.)
+                            #Use ID attribute since transcript_id attributes are incorrectly incremented and will be replaced
+                            id_pattern = r"(?<=ID=)(.*)(?=;Parent)"
+                            ID = re.search(id_pattern, sline[8]).group(1)
+                            if ID.endswith('.t1'):
+                                #First isoforms are fine
+                                pass
+                            else:
+                                #Alternative isoforms need transcript_id replaced with ID
+                                sline[8] = re.sub(r'(?<=;transcript_id=)(.*$)', ID, sline[8])
+                        fout.write('\t'.join(sline))
+                    else:
+                        fout.write(line) 
+
+
+rule get_proteins:
+    input:
+        gff = rules.reformat_gff.output,
+        ref = rules.repeat_masker.output.fasta
+    output:
+        f"{ANNOTATION_DIR}/Psic_proteins.fasta"
+    log: LOG_DIR + '/get_proteins/get_proteins.log'
+    container: 'docker://teambraker/braker3:v.1.0.4'
+    shell:
+        """
+        gffread -E -y {output} -g {input.ref} {input.gff} 2> {log}
+        """
+
 # ###############################
 # #### FUNCTIONAL ANNOTATION ####
 # ###############################
