@@ -403,9 +403,19 @@ rule fix_seq:
         sed 's/SEQ/0/g' {input} > {output}
         """
 
-rule gff_sort:
+rule remove_internalStop_gene:
     input:
         rules.fix_seq.output
+    output:
+        f"{ANNOTATION_DIR}/cleaned/Psic_structural_seqFix_noInternalStop.gff"
+    shell:
+        """
+        grep -v 'Psic_g38722' {input} > {output}
+        """
+
+rule gff_sort:
+    input:
+        rules.remove_internalStop_gene.output
     output:
         f"{ANNOTATION_DIR}/cleaned/Psic_structural_sorted.gff"
     log: LOG_DIR + '/gff_sort/gff_sort.log'
@@ -460,202 +470,173 @@ rule get_proteins:
         gffread -E -y {output} -g {input.ref} {input.gff} 2> {log}
         """
 
-# ###############################
-# #### FUNCTIONAL ANNOTATION ####
-# ###############################
-# 
-# rule run_interproscan:
-#     input:
-#         data = IPRSCAN_DATA,
-#         prot = rules.get_proteins.output
-#     output:
-#         gff =  f"{ANNOTATION_DIR}/interproscan/TrR_v6_interproscan.gff3",
-#         xml =  f"{ANNOTATION_DIR}/interproscan/TrR_v6_interproscan.xml"
-#     log: LOG_DIR + '/interproscan/run_interproscan.log'
-#     threads: 24
-#     params:
-#         out_base =  f"{ANNOTATION_DIR}/interproscan/TrR_v6_interproscan"
-#     container: 'library://james-s-santangelo/interproscan/interproscan:5.61-93.0' 
-#     shell:
-#         """
-#         interproscan.sh -i {input.prot} \
-#             -b {params.out_base} \
-#             -f xml,gff3 \
-#             -goterms \
-#             --pathways \
-#             --seqtype p \
-#             --cpu {threads} \
-#             --verbose &> {log} 
-#         """ 
-# 
-# rule funannotate_setup:
-#     output:
-#         directory(f"{ANNOTATION_DIR}/funannotate/fun_db")
-#     log: LOG_DIR + '/funannotate/funannotate_setup.log'
-#     container: '/home/santang3/singularity_containers/funannotate.sif'
-#     shell:
-#         """
-#         funannotate setup --database {output} -b embryophyta --force 2> {log}
-#         """
-# 
-# rule dl_eggnog_db:
-#     output:
-#         directory(f"{ANNOTATION_DIR}/eggnog/eggnog_db")
-#     conda: '../envs/eggnog.yaml'
-#     shell:
-#         """
-#         mkdir -p {output}
-#         download_eggnog_data.py -y --data_dir {output} 
-#         """
-# 
-# rule run_eggnog_mapper:
-#     input:
-#         prot = rules.get_proteins.output,
-#         db = rules.dl_eggnog_db.output
-#     output:
-#         annot = f"{ANNOTATION_DIR}/eggnog/TrR_v6.emapper.annotations"
-#     log: LOG_DIR + '/eggnog/aggnog_mapper.log'
-#     threads: 24
-#     conda: '../envs/eggnog.yaml'
-#     params:
-#         out = f"{ANNOTATION_DIR}/eggnog/TrR_v6"
-#     shell:
-#         """
-#         emapper.py -i {input.prot} \
-#             --data_dir {input.db} \
-#             --cpu {threads} \
-#             --itype proteins \
-#             -o {params.out} \
-#             --override &> {log}
-#         """
-# 
-# rule split_fasta_toChroms_andOrganelles:
-#     input:
-#        rules.repeat_masker.output.fasta
-#     output:
-#         chroms = f"{REFERENCE_ASSEMBLIES_DIR}/haploid_reference/TrR_v6_chromsOnly.fasta", 
-#         mito = f"{REFERENCE_ASSEMBLIES_DIR}/haploid_reference/TrR_v6_mitochondria.fasta", 
-#         cp = f"{REFERENCE_ASSEMBLIES_DIR}/haploid_reference/TrR_v6_chloroplast.fasta"
-#     conda: '../envs/annotation.yaml'
-#     params:
-#         chroms = 'Chr01_Occ Chr01_Pall Chr02_Occ Chr02_Pall Chr03_Occ Chr03_Pall Chr04_Occ Chr04_Pall Chr05_Occ Chr05_Pall Chr06_Occ Chr06_Pall Chr07_Occ Chr07_Pall Chr08_Occ Chr08_Pall'
-#     shell:
-#         """
-#         samtools faidx {input} {params.chroms} > {output.chroms}
-#         samtools faidx {input} Mitochondria > {output.mito}
-#         samtools faidx {input} Plastid > {output.cp}
-#         """
-# 
-# rule funannotate_annotate:
-#     input:
-#         enm = rules.run_eggnog_mapper.output.annot,
-#         gff = rules.reformat_gff.output, 
-#         ref = rules.split_fasta_toChroms_andOrganelles.output.chroms,
-#         iprs = rules.run_interproscan.output.xml,
-#         db = rules.funannotate_setup.output 
-#     output:
-#         directory(f"{ANNOTATION_DIR}/funannotate/annotations"),
-#         fasta = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Trifolium_repens.scaffolds.fa", 
-#         prot = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Trifolium_repens.proteins.fa", 
-#         gff3 = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Trifolium_repens.gff3", 
-#         agp = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Trifolium_repens.agp", 
-#         gbk = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Trifolium_repens.gbk", 
-#         tbl = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Trifolium_repens.tbl"
-#     log: LOG_DIR + '/funannotate/funannotate_annotate.log'
-#     container: 'docker://nextgenusfs/funannotate:v1.8.15'
-#     threads: 48 
-#     params:
-#         sbt = NCBI_TEMPLATE,
-#         outdir = f"{ANNOTATION_DIR}/funannotate/annotations"
-#     shell:
-#         """
-#         mkdir {params.outdir}
-#         funannotate annotate \
-#             --sbt {params.sbt} \
-#             --gff {input.gff} \
-#             --fasta {input.ref} \
-#             --species "Trifolium repens" \
-#             --out {params.outdir} \
-#             --iprscan {input.iprs} \
-#             --eggnog {input.enm} \
-#             --force \
-#             --database {input.db} \
-#             --busco_db embryophyta \
-#             --cpus {threads} 2> {log}
-#         """
-# 
-# rule gff_sort_functional:
-#     input:
-#         rules.funannotate_annotate.output.gff3
-#     output:
-#         f"{ANNOTATION_DIR}/UTM_Trep_v1.0_functional_sorted.gff"
-#     log: LOG_DIR + '/gff_sort/gff_sort_functional.log'
-#     conda: '../envs/annotation.yaml'
-#     shell:
-#         """
-#         gt gff3 -sort -tidy -retainids {input} > {output} 2> {log}
-#         """
-# 
-# rule add_locus_tag:
-#     input:
-#         rules.gff_sort_functional.output
-#     output:
-#         f"{ANNOTATION_DIR}/UTM_Trep_v1.0_functional_sorted_wLocusTag.gff"
-#     params:
-#         locus_tag = 'P8452'
-#     run:
-#         with open(input[0], 'r') as fin:
-#             with open(output[0], 'w') as fout:
-#                 lines = fin.readlines()
-#                 total_genes = sum([l.split('\t')[2] == 'gene' for l in lines if not l.startswith('#')])
-#                 gene_num = 1
-#                 for line in lines:
-#                     if not line.startswith('#'):
-#                         sline = line.split('\t')
-#                         feature = sline[2]
-#                         if feature == 'gene':
-#                             # Remove transcript_id attribute from gene features
-#                             sline[8] = re.sub(r'(;transcript_id.*$)', '', sline[8])
-#                                                 
-#                             # Assign locus tag to attributes of gene features
-#                             locus_tag = f'{params.locus_tag}_' + str(int(gene_num)).zfill(len(str(total_genes)))
-#                             sline[8] = f"{sline[8].strip()};locus_tag={locus_tag}\n"
-#                             gene_num += 1
-#                         else:
-#                             pass
-#                         fout.write('\t'.join(sline))
-#                     else:
-#                         fout.write(line) 
-# 
-# rule tableToAsn_haploid:
-#     input:
-#         gff = rules.add_locus_tag.output,
-#         sbt = NCBI_TEMPLATE,
-#         ref = rules.split_fasta_toChroms_andOrganelles.output.chroms
-#     output:
-#         directory(f"{NCBI_DIR}/table2asn_haploid")
-#     log: f"{LOG_DIR}/tableToAsn/tableToAsn_haploid.log"
-#     shell:
-#         """
-#         wget https://ftp.ncbi.nlm.nih.gov/asn1-converters/by_program/table2asn/linux64.table2asn.gz
-#         gunzip linux64.table2asn.gz
-#         mv linux64.table2asn table2asn
-#         chmod +x table2asn
-# 
-#         ./table2asn -i {input.ref} \
-#             -f {input.gff} \
-#             -t {input.sbt} \
-#             -o {output} \
-#             -Z -V vb -euk -c f \
-#             -gaps-min 10 \
-#             -l proximity-ligation \
-#             -gaps-unknown 100 \
-#             -j "[organism=Trifolium repens]" 2> {log}
-#         """
+###############################
+###FUNCTIONAL ANNOTATION ####
+###############################
+
+rule run_interproscan:
+    input:
+        data = IPRSCAN_DATA,
+        prot = rules.get_proteins.output
+    output:
+        gff =  f"{ANNOTATION_DIR}/interproscan/Psic_interproscan.gff3",
+        xml =  f"{ANNOTATION_DIR}/interproscan/Psic_interproscan.xml"
+    log: LOG_DIR + '/interproscan/run_interproscan.log'
+    threads: 24
+    params:
+        out_base =  f"{ANNOTATION_DIR}/interproscan/Psic_interproscan"
+    container: 'library://james-s-santangelo/interproscan/interproscan:5.61-93.0' 
+    shell:
+        """
+        interproscan.sh -i {input.prot} \
+            -b {params.out_base} \
+            -f xml,gff3 \
+            -goterms \
+            --pathways \
+            --seqtype p \
+            --cpu {threads} \
+            --verbose &> {log} 
+        """ 
+
+rule funannotate_setup:
+    output:
+        directory(f"{ANNOTATION_DIR}/funannotate/fun_db")
+    log: LOG_DIR + '/funannotate/funannotate_setup.log'
+    container: 'docker://nextgenusfs/funannotate:v1.8.15'
+    shell:
+        """
+        funannotate setup --database {output} -b tetrapoda --force 2> {log}
+        """
+
+rule dl_eggnog_db:
+    output:
+        directory(f"{ANNOTATION_DIR}/eggnog/eggnog_db")
+    conda: '../envs/annotation.yaml'
+    shell:
+        """
+        mkdir -p {output}
+        download_eggnog_data.py -y --data_dir {output} 
+        """
+
+rule run_eggnog_mapper:
+    input:
+        prot = rules.get_proteins.output,
+        db = rules.dl_eggnog_db.output
+    output:
+        annot = f"{ANNOTATION_DIR}/eggnog/Psic.emapper.annotations"
+    log: LOG_DIR + '/eggnog/aggnog_mapper.log'
+    threads: 24
+    conda: '../envs/annotation.yaml'
+    params:
+        out = f"{ANNOTATION_DIR}/eggnog/Psic"
+    shell:
+        """
+        emapper.py -i {input.prot} \
+            --data_dir {input.db} \
+            --cpu {threads} \
+            --itype proteins \
+            -o {params.out} \
+            --override &> {log}
+        """
+
+rule funannotate_annotate:
+    input:
+        enm = rules.run_eggnog_mapper.output.annot,
+        gff = rules.reformat_gff.output, 
+        ref = rules.repeat_masker.output.fasta,
+        iprs = rules.run_interproscan.output.xml,
+        db = rules.funannotate_setup.output 
+    output:
+        directory(f"{ANNOTATION_DIR}/funannotate/annotations"),
+        fasta = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Podacris_siculus.scaffolds.fa", 
+        prot = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Podacris_siculus.proteins.fa", 
+        gff3 = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Podacris_siculus.gff3", 
+        agp = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Podacris_siculus.agp", 
+        gbk = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Podacris_siculus.gbk", 
+        tbl = f"{ANNOTATION_DIR}/funannotate/annotations/annotate_results/Podacris_siculus.tbl"
+    log: LOG_DIR + '/funannotate/funannotate_annotate.log'
+    container: 'docker://nextgenusfs/funannotate:v1.8.15'
+    threads: 24 
+    params:
+        outdir = f"{ANNOTATION_DIR}/funannotate/annotations"
+    shell:
+        """
+        mkdir -p {params.outdir}
+        funannotate annotate \
+            --gff {input.gff} \
+            --fasta {input.ref} \
+            --species "Podacris siculus" \
+            --out {params.outdir} \
+            --iprscan {input.iprs} \
+            --eggnog {input.enm} \
+            --force \
+            --database {input.db} \
+            --busco_db tetrapoda \
+            --cpus {threads} 2> {log}
+        """
+
+
+rule download_ec_numbers:
+    """
+    Download Enzyme Commission numbers from ExPASSY
+    """
+    output:
+        f"{PROGRAM_RESOURCE_DIR}/EC_numbers/enzyme.dat"
+    params:
+        outdir = f"{PROGRAM_RESOURCE_DIR}/EC_numbers",
+        url = 'https://ftp.expasy.org/databases/enzyme/enzyme.dat'
+    shell:
+        """
+        wget {params.url} --no-check-certificate -P {params.outdir}
+        """
+
+rule fixEC_incrementCDS_addLocusTags:
+    """
+    Remap Hypothetical Proteins based on fully-resolved EC Numbers. Delete EC Number of not fully-resolved.
+    Increment CDS IDs so they're unique.
+    """
+    input:
+        gff = rules.funannotate_annotate.output.gff3,
+        ec = rules.download_ec_numbers.output
+    output:
+        f"{ANNOTATION_DIR}/cleaned/Psic_functional_ECfix_wLocusTags.gff"
+    conda: '../envs/annotation.yaml'
+    params:
+        locus_tag = 'Psic'
+    script:
+        "../scripts/python/fixEC_incrementCDS_addLocusTags.py"
+
+rule gff_sort_functional:
+    """
+    Sort GFF3 with functional annotations using GFF3_sort Perl script. Can't use genometools here since sorting not compatible with table2asn
+    """
+    input:
+        rules.fixEC_incrementCDS_addLocusTags.output
+    output:
+        f"{ANNOTATION_DIR}/Psic_functional_final_sorted.gff3"
+    log: LOG_DIR + '/gff_sort/gff_sort_functional.log'
+    conda: '../envs/annotation.yaml'
+    shell:
+        """
+        gff3_sort -g {input} -r -og {output} 2> {log}
+        """
+
+rule get_proteins_finalGFF:
+    input:
+        gff = rules.gff_sort_functional.output,
+        ref = rules.repeat_masker.output.fasta
+    output:
+        f"{ANNOTATION_DIR}/Psic_proteins_final.fasta"
+    log: LOG_DIR + '/get_proteins/get_proteins_final.log'
+    container: 'docker://teambraker/braker3:v.1.0.4'
+    shell:
+        """
+        gffread -E -y {output} -g {input.ref} {input.gff} 2> {log}
+        """
 
 rule annotation_done:
     input:
-        rules.repeat_masker.output
+        rules.get_proteins_finalGFF.output
     output:
         f"{ANNOTATION_DIR}/annotation.done"
     shell:

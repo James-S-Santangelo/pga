@@ -40,10 +40,50 @@ rule run_busco_genome:
             --cpu {threads} &> {log}
         """
 
+rule functional_stats:
+    input:
+        gff = rules.gff_sort_functional.output,
+        fasta = rules.repeat_masker.output.fasta
+    output:
+        directory(f"{QC_DIR}/agat_funcStats")
+    log: f"{LOG_DIR}/agat_funcStats/agat_funcStats.log"
+    container: 'docker://quay.io/biocontainers/agat:1.0.0--pl5321hdfd78af_0'
+    shell:
+        """
+        agat_sp_functional_statistics.pl --gff {input.gff} \
+            -gs {input.fasta} \
+            --output {output} 2> {log}
+        """
+
+rule run_busco_protein:
+    input:
+        rules.get_proteins_finalGFF.output
+    output:
+        directory(f"{QC_DIR}/busco/protein/psic_protein_tetrapoda")
+    log: LOG_DIR + '/busco/busco_protein_tetrapoda.log'
+    conda: '../envs/qc.yaml'
+    threads: 32
+    params:
+        out_path = f"{QC_DIR}/busco/protein/",
+        out_name = "psic_protein_tetrapoda"
+    shell:
+        """
+        busco -m protein \
+            -i {input} \
+            -o {params.out_name} \
+            --out_path {params.out_path} \
+            --lineage tetrapoda_odb10 \
+            --force \
+            --cpu {threads} &> {log}
+        """
+
+
 rule qc_done:
     input:
         rules.quast_psic_ref.output,
-        rules.run_busco_genome.output
+        rules.run_busco_genome.output,
+        rules.functional_stats.output,
+        rules.run_busco_protein.output
     output:
         f'{QC_DIR}/qc.done'
     shell:

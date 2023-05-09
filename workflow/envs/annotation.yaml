@@ -7,3 +7,8 @@ dependencies:
   - star=2.7.0b
   - samtools=1.16.1
   - gff3sort=0.1.a1a2bc9
+  - eggnog-mapper=2.1.10
+  - pip
+  - gffutils=0.11.1
+  - pip:
+    - gff3tool
