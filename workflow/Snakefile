@@ -10,10 +10,6 @@ configfile: '../config/ponderosa.yaml'
 # Define absolute path to pipeline resources
 RESOURCES = os.path.abspath(config['resources'])
 
-# Programs required by BRAKER
-GENEMARK = config['genemark']
-PROTHINT = config['prothint']
-
 # Input files
 PSIC_REF = f"{RESOURCES}/genome_fasta/Psic_sn201_all.ph.fasta"
 REPBASE = f"{RESOURCES}/RepBaseRepeatMaskerEdition-20181026.tar.gz"
