@@ -1,5 +1,6 @@
 ## Podacris Genome Annotation (PGA)
 
+TODO: Link manuscript when published
 ### Genomic signatures of selection underpinning extremely rapid adaptation in island lizards
 #### Authors: Maria Novosolov, Anthony Herrel, Anamaria Stambuk, Jesper Stenderup, James S. Santangelo, Iva Sabolić, Kristian E. Hanghøj, Thorfinn S. Korneliussen, Debora Y. C. Brandt, Rasmus Heller, Rasmus Nielsen, Morten E. Allentoft
 
