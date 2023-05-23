@@ -5,6 +5,9 @@
 #####################################
 
 rule configure_repbase:
+    """
+    Configure RepBase Database for use with RepeatModeler
+    """
     input:
         REPBASE
     output:
@@ -18,12 +21,15 @@ rule configure_repbase:
     shell:
         """
         ( tar -xzf {input} -C {params.untar_dir} &&
-        cp -r /opt/RepeatMasker/Libraries/* {output.libdir} &&
-        ln -sf {output.dfam} {output.rm} &&
-        addRepBase.pl --libdir {output.libdir} ) &> {log}
+         cp -r /opt/RepeatMasker/Libraries/* {output.libdir} &&
+         ln -sf {output.dfam} {output.rm} &&
+         addRepBase.pl --libdir {output.libdir} ) &> {log}
         """
 
 rule build_repeat_modeler_db:
+    """
+    Build RepeatModeler Database from haploid mapping reference assembly
+    """
     input:
         rules.subset_ref_bySeqLength.output.fasta
     output:
@@ -38,6 +44,9 @@ rule build_repeat_modeler_db:
         """
 
 rule repeat_modeler:
+    """
+    Build de novo repeat library from haploid mapping reference assembly using RepeatModeler
+    """
     input:
         rules.build_repeat_modeler_db.output,
         rules.configure_repbase.output
@@ -57,6 +66,9 @@ rule repeat_modeler:
         """
 
 rule merge_repeat_databases:
+    """
+    Merge de novo repeat library with Green Plant (i.e., Viridiplantae) repeat library from RepBase
+    """
     input:
         rm_db = rules.configure_repbase.output.rm,
         tr_db = rules.repeat_modeler.output.fasta
@@ -77,6 +89,9 @@ rule merge_repeat_databases:
         """
 
 rule repeat_masker:
+    """
+    Softmask repeats in the white clover haploid mapping reference assembly.
+    """
     input:
         lib = rules.merge_repeat_databases.output,
         fasta = rules.subset_ref_bySeqLength.output.fasta
@@ -114,6 +129,9 @@ rule repeat_masker:
 ###########################################
 
 rule prefetch:
+    """
+    Pre-fetch RNAseq libraries that will be used for structural gene annotation
+    """
     output:
         temp(directory(f"{ANNOTATION_DIR}/rnaseq_reads/{{acc}}"))
     log: LOG_DIR + '/prefetch/{acc}.log'
@@ -126,6 +144,9 @@ rule prefetch:
         """
 
 rule fasterq_dump:
+    """
+    Download pre-fetched RNAseq libraries used for structural gene annotation
+    """
     input:
         expand(rules.prefetch.output, acc=RNASEQ_ACCESSIONS)
     output:
@@ -146,6 +167,9 @@ rule fasterq_dump:
         """
 
 rule gzip_fastq:
+    """
+    Gzip downloaded RNAseq libraries
+    """
     input:
         rules.fasterq_dump.output
     output:
@@ -158,6 +182,9 @@ rule gzip_fastq:
         """
 
 rule build_star:
+    """
+    Build STAR Database from softmasked haploid mapping reference assembly
+    """
     input:
         masked_genome = rules.repeat_masker.output.fasta 
     output:
@@ -175,6 +202,10 @@ rule build_star:
         """
 
 rule align_star:
+    """
+    Align downloaded RNAseq reads to softmasked haploid reference assembly using STAR in two-pass mode.
+    Set max intron length to 10000.
+    """
     input:
         star_build = rules.build_star.output,
         R1 = rules.gzip_fastq.output.R1,
@@ -222,6 +253,9 @@ rule merge_rnaseq_bams:
 ###############################
 
 rule vertebrata_orthodb:
+    """
+    Download Vertebrate OrthoDB
+    """
     output:
         ProrteinDB = f"{PROGRAM_RESOURCE_DIR}/orthodb/Vertebrata.fa"
     log: LOG_DIR + "/orthodb/ortho.log"
@@ -234,6 +268,9 @@ rule vertebrata_orthodb:
         """
 
 rule download_podacris_proteins:
+    """
+    Download proteins from closely-related Podacris species (i.e., P. muralis and P. raffonei)
+    """
     output:
         prot = f"{PROGRAM_RESOURCE_DIR}/podacris_proteins/{{psp}}/{{psp}}_proteins.fa"
     log: f"{LOG_DIR}/download_podacris_proteins/{{psp}}.log"
@@ -250,7 +287,7 @@ rule download_podacris_proteins:
 
 rule download_uniprot_lacertidae_db:
     """
-    Download all Fabaceae proteins from UniProtKB
+    Download all lacertidae proteins from UniProtKB
     """
     output:
         f'{PROGRAM_RESOURCE_DIR}/uniprot/lacertidae_proteins.fasta'
@@ -263,6 +300,9 @@ rule download_uniprot_lacertidae_db:
         """
 
 rule combine_protein_dbs:
+    """
+    Combine the vertebrate OrthoDB, Podacris, and lacertidae protein databases. This will be used as input to BRAKER in protein mode. 
+    """
     input:
         ortho = rules.vertebrata_orthodb.output,
         psp = expand(rules.download_podacris_proteins.output, psp = ['Praf', 'Pmur']),
@@ -275,6 +315,9 @@ rule combine_protein_dbs:
         """
 
 rule braker_protein:
+    """
+    Run BRAKER in protein-mode
+    """
     input:
         proteins = rules.combine_protein_dbs.output,
         masked_genome = rules.repeat_masker.output.fasta,
@@ -298,6 +341,9 @@ rule braker_protein:
         """ 
 
 rule braker_rnaseq:
+    """
+    Run BRAKER in RNAseq-mode
+    """
     input:
         masked_genome = rules.repeat_masker.output.fasta,
         bam = rules.merge_rnaseq_bams.output.bam
@@ -321,6 +367,9 @@ rule braker_rnaseq:
         """
 
 rule tsebra_combine:
+    """
+    Combine evidence from BRAKER Rnaseq and BRAKER protein using TSEBRA
+    """
     input:
         rules.braker_protein.output,
         rules.braker_rnaseq.output,
@@ -344,6 +393,9 @@ rule tsebra_combine:
         """ 
 
 rule rename_tsebra_gtf:
+    """
+    Rename genes in combined TSEBRA GTF
+    """
     input:
         rules.tsebra_combine.output
     output:
@@ -354,16 +406,19 @@ rule rename_tsebra_gtf:
     shell:
         """
         rename_gtf.py --gtf {input} \
-            --prefix Psic \
-            --translation_tab {output.tab} \
-            --out {output.gtf} 2> {log} 
+                --prefix Psic \
+                --translation_tab {output.tab} \
+                --out {output.gtf} 2> {log} 
         """
 
 ###############################
 ###CLEAN & TRANSFORM GTF ####
 ###############################
 
-rule remove_features_and_organelles:
+rule remove_features:
+    """
+    Remove features except CDS. Required since BRAKER-generated GTFs are not compatible with most downstream software out-of-the box
+    """
     input:
         rules.rename_tsebra_gtf.output
     output:
@@ -381,8 +436,11 @@ rule remove_features_and_organelles:
                         fout.write(line)
 
 rule gtf_to_gff:
+    """
+    Convert BRAKER-generated GTF to GFF3 using AGAT
+    """
     input:
-        rules.remove_features_and_organelles.output
+        rules.remove_features.output
     output:
         f"{ANNOTATION_DIR}/cleaned/Psic_structural.gff"
     container: 'docker://quay.io/biocontainers/agat:1.0.0--pl5321hdfd78af_0'
@@ -394,6 +452,9 @@ rule gtf_to_gff:
         """
 
 rule fix_seq:
+    """
+    Fix ID column where scaffold 0 was converted to SEQ
+    """
     input:
         rules.gtf_to_gff.output
     output:
@@ -404,6 +465,9 @@ rule fix_seq:
         """
 
 rule remove_internalStop_gene:
+    """
+    Remove single gene with internal stop codong causing InterproScan to break
+    """
     input:
         rules.fix_seq.output
     output:
@@ -414,6 +478,9 @@ rule remove_internalStop_gene:
         """
 
 rule gff_sort:
+    """
+    Sort GFF3 using genome tools
+    """
     input:
         rules.remove_internalStop_gene.output
     output:
@@ -426,6 +493,9 @@ rule gff_sort:
         """
 
 rule reformat_gff:
+    """
+    Fix transcript IDs for genes with alternative mRNA isoforms and remove transcript_id from gene features
+    """
     input:
         rules.gff_sort.output
     output:
@@ -458,6 +528,9 @@ rule reformat_gff:
 
 
 rule get_proteins:
+    """
+    Get protein FASTA file using gffread
+    """
     input:
         gff = rules.reformat_gff.output,
         ref = rules.repeat_masker.output.fasta
@@ -475,6 +548,9 @@ rule get_proteins:
 ###############################
 
 rule run_interproscan:
+    """
+    Generate functional annotations using InterProScan
+    """
     input:
         data = IPRSCAN_DATA,
         prot = rules.get_proteins.output
@@ -499,6 +575,9 @@ rule run_interproscan:
         """ 
 
 rule funannotate_setup:
+    """
+    Download Databases for Funannotate
+    """
     output:
         directory(f"{ANNOTATION_DIR}/funannotate/fun_db")
     log: LOG_DIR + '/funannotate/funannotate_setup.log'
@@ -509,6 +588,9 @@ rule funannotate_setup:
         """
 
 rule dl_eggnog_db:
+    """
+    Download databases for EggNog-mapper
+    """
     output:
         directory(f"{ANNOTATION_DIR}/eggnog/eggnog_db")
     conda: '../envs/annotation.yaml'
@@ -519,6 +601,9 @@ rule dl_eggnog_db:
         """
 
 rule run_eggnog_mapper:
+    """
+    Generate functional annotations using Eggnog-mapper
+    """
     input:
         prot = rules.get_proteins.output,
         db = rules.dl_eggnog_db.output
@@ -540,6 +625,9 @@ rule run_eggnog_mapper:
         """
 
 rule funannotate_annotate:
+    """
+    Use Funannotate to combine InterProScan and Eggnog annotations and generate additional functional annotations
+    """
     input:
         enm = rules.run_eggnog_mapper.output.annot,
         gff = rules.reformat_gff.output, 
@@ -622,6 +710,9 @@ rule gff_sort_functional:
         """
 
 rule get_proteins_finalGFF:
+    """
+    Get final protein set using GFFREAD
+    """
     input:
         gff = rules.gff_sort_functional.output,
         ref = rules.repeat_masker.output.fasta

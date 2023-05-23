@@ -1,6 +1,9 @@
 # Rule to QC original Dovetail haplotypes, revised haplotypes, and final assemblies
 
 rule quast_psic_ref:
+    """
+    Run QUAST to generate genome assembly statistics
+    """
     input:
         fasta = rules.setup_ref.output.fasta 
     output:
@@ -11,14 +14,17 @@ rule quast_psic_ref:
     shell:
         """
         quast.py -o {output} \
-            --threads {threads} \
-            --split-scaffolds \
-            --large \
-            --k-mer-stats \
-            {input.fasta} &> {log}
+                --threads {threads} \
+                --split-scaffolds \
+                --large \
+                --k-mer-stats \
+                {input.fasta} &> {log}
         """
 
 rule run_busco_genome:
+    """
+    Run BUSCO in genome-mode against tetrapod database
+    """
     input:
         fasta = rules.subset_ref_bySeqLength.output.fasta
     output:
@@ -32,15 +38,18 @@ rule run_busco_genome:
     shell:
         """
         busco -m genome \
-            -i {input.fasta} \
-            -o {params.out_name} \
-            --out_path {params.out_path} \
-            --lineage tetrapoda_odb10 \
-            --force \
-            --cpu {threads} &> {log}
+                -i {input.fasta} \
+                -o {params.out_name} \
+                --out_path {params.out_path} \
+                --lineage tetrapoda_odb10 \
+                --force \
+                --cpu {threads} &> {log}
         """
 
 rule functional_stats:
+    """
+    Generate summary statistics of functional annotation using AGAT
+    """
     input:
         gff = rules.gff_sort_functional.output,
         fasta = rules.repeat_masker.output.fasta
@@ -51,11 +60,14 @@ rule functional_stats:
     shell:
         """
         agat_sp_functional_statistics.pl --gff {input.gff} \
-            -gs {input.fasta} \
-            --output {output} 2> {log}
+                -gs {input.fasta} \
+                --output {output} 2> {log}
         """
 
 rule run_busco_protein:
+    """
+    Run BUSCO in protein-mode against tetrapod database
+    """
     input:
         rules.get_proteins_finalGFF.output
     output:
@@ -69,12 +81,12 @@ rule run_busco_protein:
     shell:
         """
         busco -m protein \
-            -i {input} \
-            -o {params.out_name} \
-            --out_path {params.out_path} \
-            --lineage tetrapoda_odb10 \
-            --force \
-            --cpu {threads} &> {log}
+                -i {input} \
+                -o {params.out_name} \
+                --out_path {params.out_path} \
+                --lineage tetrapoda_odb10 \
+                --force \
+                --cpu {threads} &> {log}
         """
 
 

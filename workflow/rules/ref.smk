@@ -1,4 +1,7 @@
 rule setup_ref:
+    """
+    Symlink reference to avoid duplicating and index with samtools
+    """
     input:
         fasta = PSIC_REF
     output:
@@ -13,6 +16,9 @@ rule setup_ref:
 
 
 rule subset_ref_bySeqLength:
+    """
+    Subset reference to only include scaffolds over 100 Kb
+    """
     input:
         fasta = rules.setup_ref.output.fasta,
         fai = rules.setup_ref.output.fai
